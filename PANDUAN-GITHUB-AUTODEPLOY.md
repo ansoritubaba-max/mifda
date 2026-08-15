@@ -1,107 +1,131 @@
-# Panduan Auto-Deploy: Local → GitHub → cPanel
+# Panduan Auto-Deploy: Local → GitHub → cPanel (via SSH)
 
-Alur akhirnya: kamu `git push`, GitHub Actions otomatis manggil cPanel buat `pull` commit terbaru + jalanin composer/migrate/cache. Gak perlu upload manual/FTP lagi.
+SSH ternyata ada di hosting kamu — jadi kita pakai jalur yang paling bersih & standar: **GitHub Actions SSH ke server**, jalanin `git pull` + `composer install` + `migrate` + cache clear otomatis tiap `git push`. Gak perlu buka cPanel lagi sama sekali.
 
-Berlaku buat 2 project: **Absensi** (`File cPanel/`) dan **Mifda** (`aplikasi-belajar-mi 2/`) — masing-masing repo GitHub terpisah, deploy terpisah.
+Berlaku buat 2 project: **Absensi** (`File cPanel/`) dan **Mifda** (`aplikasi-belajar-mi 2/`) — repo GitHub terpisah, deploy terpisah, masing-masing punya `.github/workflows/deploy.yml` + `deploy.sh` sendiri (udah aku siapin).
 
-Karena hosting kamu gak ada SSH, semua langkah di bawah pakai fitur bawaan cPanel (**Git™ Version Control** + **API Token**), gak butuh Terminal/SSH sama sekali.
+## Penting: ada 2 SSH key yang beda fungsi, jangan ketuker
 
-## Yang udah aku siapin di kedua project
+1. **Key #1 — GitHub Actions → Server** (buat GitHub bisa "masuk" ke server dan jalanin `deploy.sh`). Ini yang PERLU kamu authorize di cPanel SSH Access dan private key-nya disimpan sebagai GitHub Secret.
+2. **Key #2 — Server → GitHub** (buat server bisa `git pull` dari repo GitHub yang PRIVATE). Ini dibuat DI SERVER (lewat Terminal cPanel), public key-nya didaftarin sebagai Deploy Key di tiap repo GitHub.
 
-- `git init` + commit pertama — kode kamu sekarang udah jadi repo git beneran (lokal), tinggal dorong ke GitHub.
-- `.cpanel.yml` — resep deploy yang bakal dijalanin cPanel tiap kali ada pull baru: copy file → `composer install` → `migrate --force` → cache clear.
-- `.github/workflows/deploy.yml` — workflow GitHub Actions yang manggil cPanel buat deploy tiap ada push ke branch `main`.
-- `.gitignore` disesuaikan: `/public/build` (hasil build Vite) **sengaja gak di-ignore** karena server gak ada Node/npm buat build otomatis — jadi kamu build lokal dulu sebelum push (dijelasin di bagian alur harian).
-- Dicek: `.env` beneran gak ke-track (aman, kredensial gak bakal ke-push ke GitHub).
+Kalau key yang tadi kamu buat itu buat login/connect ke server (Key #1), itu udah pas — tinggal lanjut dari Bagian 2. Kalau ternyata itu buat hal lain, gak masalah, tinggal ikutin Bagian 2 buat bikin yang bener.
 
-## Bagian 1 — Buat repo di GitHub (2x, satu per app)
+## Bagian 1 — Push ke GitHub (2x, satu per app) — SAMA kayak sebelumnya
 
-1. Buka github.com → **New repository**.
-2. Kasih nama (bebas, misal `absensi-mi-alamien` dan `mifda-belajar`), pilih **Private** (rekomendasi — walau `.env` aman, kode sistem sekolah beneran lebih baik gak publik), **jangan** centang "Add README"/".gitignore" (biar gak bentrok sama commit yang udah ada).
-3. Push repo lokal ke situ — jalanin di terminal laptop kamu (bukan di sini), dari folder masing-masing project:
-
+1. Buka github.com → **New repository** → nama bebas → **Private** → jangan centang README/.gitignore.
+2. Dari laptop kamu (bukan di sini):
    ```bash
    cd "path/ke/File cPanel"
    git remote add origin https://github.com/USERNAME_GITHUB/absensi-mi-alamien.git
    git push -u origin main
    ```
-
    ```bash
    cd "path/ke/aplikasi-belajar-mi 2"
    git remote add origin https://github.com/USERNAME_GITHUB/mifda-belajar.git
    git push -u origin main
    ```
+   Kalau diminta login, pakai Personal Access Token (GitHub → Settings → Developer settings → Personal access tokens → generate, scope `repo`) sebagai password.
 
-   Kalau diminta login, GitHub sekarang wajib pakai **Personal Access Token** (bukan password biasa) — buat di GitHub → Settings → Developer settings → Personal access tokens → Generate new token (classic, scope `repo`), pakai token itu sebagai password pas `git push` minta login.
+## Bagian 2 — Pastiin Key #1 (GitHub Actions → Server) udah ke-authorize
 
-## Bagian 2 — Sambungkan cPanel ke repo GitHub (Git Version Control)
+1. cPanel → **SSH Access** → **Manage SSH Keys**.
+2. Cek key yang kamu buat tadi — kalau statusnya bukan "Authorized", klik **Manage** di sebelah key itu → **Authorize**.
+3. Ambil isi PRIVATE key-nya: masih di halaman yang sama, cari opsi **View/Download Key** pada key tersebut → copy semua isinya (termasuk baris `-----BEGIN ... PRIVATE KEY-----` dan `-----END ... PRIVATE KEY-----`).
+4. Catat juga: **hostname/IP server** dan **port SSH**-nya — biasanya kelihatan di halaman SSH Access bagian atas (contoh: `Host: server123.hostingmu.com`, `Port: 21098` — port SSH cPanel sering BUKAN 22, harus dicek, jangan asal isi 22).
 
-Ulangi untuk kedua app. Di cPanel:
+## Bagian 3 — Setup Key #2 (Server → GitHub) lewat Terminal cPanel
 
-1. Cari fitur **Git™ Version Control** (search box cPanel) → **Create**.
-2. **Clone URL**: karena repo private dan gak ada SSH, pakai format HTTPS dengan token nempel:
-   ```
-   https://USERNAME_GITHUB:GANTI_PERSONAL_ACCESS_TOKEN@github.com/USERNAME_GITHUB/absensi-mi-alamien.git
-   ```
-   (Buat token baru khusus ini kalau mau, scope `repo` read cukup — beda dari token yang dipakai `git push` di langkah 1, biar gampang di-revoke terpisah kalau perlu.)
-3. **Repository Path**: folder BARU yang KOSONG, terpisah dari folder live sekarang. Ini cuma tempat "staging" clone-nya, bukan folder yang diakses publik. Contoh: `/home/USERNAME_CPANEL/repositories/absensi`.
-4. Klik **Create**. Tunggu sampai selesai clone.
-5. Catat path lengkap Repository Path ini — dipakai lagi di Bagian 4.
+Buka **Terminal** di cPanel, jalanin (ganti nama file sesuai app):
 
-**Kenapa gak clone langsung ke folder live yang sekarang dipakai domain?** Karena folder itu udah isi (aplikasi yang jalan + database real), dan cPanel Git Version Control cuma bisa clone ke folder kosong. Makanya polanya: clone ke folder staging terpisah, terus `.cpanel.yml` yang tugasnya nyalin file dari staging ke folder live tiap kali ada deploy (sudah aku siapin, lihat isi `.cpanel.yml` di masing-masing repo — cuma perlu kamu isi 2 placeholder di dalamnya, lihat Bagian 3).
-
-## Bagian 3 — Isi placeholder di `.cpanel.yml`
-
-Buka `.cpanel.yml` di masing-masing project (udah aku buatin), ganti:
-
-- `GANTI_USERNAME` → username cPanel kamu.
-- Path `DEPLOYPATH` → path folder LIVE yang sekarang beneran dipakai domain (cek di cPanel **File Manager**, biasanya `/home/USERNAME_CPANEL/absensi.ynt.my.id/` atau `/home/USERNAME_CPANEL/public_html/` tergantung setup addon domain kamu).
-
-Kalau nanti pas deploy pertama error "php: command not found" atau "composer: command not found", buka cPanel → **Select PHP Version**, cek versi yang dipakai (harus 8.1+), lalu ganti baris `php artisan ...` di `.cpanel.yml` jadi path lengkap, polanya:
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/deploy_absensi -N "" -C "deploy-absensi"
+cat ~/.ssh/deploy_absensi.pub
 ```
-/opt/cpanel/ea-php81/root/usr/bin/php artisan migrate --force
+
+Copy output `cat` di atas → GitHub repo Absensi → **Settings** → **Deploy keys** → **Add deploy key** → paste → **jangan centang** "Allow write access" (read-only cukup, ini cuma buat pull) → **Add key**.
+
+Ulangi buat Mifda dengan nama file beda (`deploy_mifda`), didaftarin ke repo Mifda.
+
+Tambahin file `~/.ssh/config` (buat lewat Terminal juga, `nano ~/.ssh/config`), isinya:
+
 ```
-(ganti `ea-php81` sesuai versi PHP yang aktif). Commit + push perubahan ini abis ditest jalan.
+Host github.com-absensi
+    Hostname github.com
+    IdentityFile ~/.ssh/deploy_absensi
+    User git
 
-## ⚠️ REVISI PENTING — hostingmu gak support full-otomatis
+Host github.com-mifda
+    Hostname github.com
+    IdentityFile ~/.ssh/deploy_mifda
+    User git
+```
 
-Udah dicek pakai script diagnostik: hostingmu mematikan `shell_exec`, `exec`, `proc_open`, dan gak ada fitur **API Tokens** maupun **SSH Access**. Artinya 3 cara "otomatis tanpa klik apa-apa" (GitHub Actions + API Token, webhook PHP, push-deployment SSH) semuanya gak bisa dipakai di paket hosting ini — bukan salah setup, memang dikunci dari sononya.
+Test masing-masing (harus muncul "successfully authenticated"):
+```bash
+ssh -T git@github.com-absensi
+ssh -T git@github.com-mifda
+```
 
-**Yang masih 100% bisa dan tetap jauh lebih enak dari upload manual/FTP:** cPanel Git Version Control (Bagian 1-3 di atas tetap dipakai persis kayak gitu) + **2 klik manual** di cPanel setiap abis `git push`. Gak butuh SSH, API Token, atau `.github/workflows` sama sekali — makanya file workflow-nya udah aku hapus (gak akan pernah bisa jalan tanpa API Token).
+## Bagian 4 — Retrofit folder LIVE jadi git repo (HATI-HATI, one-time, backup dulu)
 
-### Cara deploy (2 klik, ~15 detik)
+Ulangi buat kedua app. Ini langkah paling kritis — dilakuin sekali doang, salah dikit bisa bikin situs down, jadi:
 
-Setiap abis `git push` ke GitHub:
+**Backup dulu**: cPanel File Manager → klik folder live app-nya → **Compress** → jadi `.zip` → download / simpen aman. 30 detik doang, jangan diskip.
 
-1. Buka cPanel → **Git™ Version Control** → klik **Manage** di repo yang mau diupdate.
-2. Tab **Pull or Deploy** → klik **Update from Remote** (ini yang narik commit terbaru dari GitHub).
-3. Klik **Deploy HEAD Commit** (ini yang jalanin `.cpanel.yml` — copy file ke folder live, `composer install`, `migrate --force`, cache clear — semua otomatis begitu diklik).
-4. Selesai. Buka domain live buat mastiin gak error.
+Lewat Terminal cPanel:
 
-### Testing pertama
+```bash
+cd /home/GANTI_USERNAME/absensi.ynt.my.id   # folder LIVE yang sekarang, sesuaikan path
+git init
+git remote add origin git@github.com-absensi:USERNAME_GITHUB/absensi-mi-alamien.git
+git fetch origin main
+git reset --hard origin/main
+```
 
-1. Pastiin `.env` (versi PRODUCTION) udah ada manual di folder live cPanel — gak ikut ke-push lewat git (sengaja, demi keamanan), jadi kalau folder live belum punya `.env`, upload sekali manual lewat File Manager sebelum testing.
-2. Bikin perubahan kecil yang aman di lokal, commit, push ke `main`.
-3. Lakuin 2 klik di atas.
-4. Cek folder live di File Manager — file yang diubah harusnya udah ke-update. Buka domain live, pastiin normal.
+`git reset --hard` di sini AMAN buat `.env`, `storage/` (upload real, sesi, log), `vendor/` — semua itu status "untracked/ignored" jadi gak pernah disentuh git (cuma file yang di-track di repo yang di-overwrite, dan isinya sama kayak kode yang udah kita develop bareng, jadi harusnya identik). Yang WAJIB dihindari: jangan pernah jalanin `git clean -fd` di folder ini — itu beda dari reset, itu bakal BENERAN hapus file untracked kayak `.env` dan upload asli.
 
-### Alur kerja harian
+Abis itu:
+```bash
+composer install --no-dev --optimize-autoloader --no-interaction
+```
+(vendor/ belum ke-generate dari git reset karena emang gak ditrack — sekali ini aja manual, abis ini otomatis lewat `deploy.sh`)
+
+Buka domain live-nya, pastiin masih jalan normal. Kalau ada yang aneh, tinggal extract lagi backup .zip tadi ke folder ini buat balikin ke kondisi semula.
+
+Ulangi persis buat Mifda (folder `/home/GANTI_USERNAME/mifda.my.id`, remote `github.com-mifda`).
+
+## Bagian 5 — Isi `deploy.sh` dan Secrets GitHub
+
+Buka `.github/workflows/deploy.sh` di masing-masing project (udah aku buatin), ganti `GANTI_USERNAME` dan path-nya sesuai folder live asli (path yang sama kayak Bagian 4).
+
+Di tiap repo GitHub → **Settings** → **Secrets and variables** → **Actions** → tambahin:
+
+| Secret | Isi |
+|---|---|
+| `SSH_PRIVATE_KEY` | Private key dari Bagian 2 langkah 3 |
+| `SERVER_HOST` | Hostname/IP server dari Bagian 2 langkah 4 |
+| `SERVER_PORT` | Port SSH dari Bagian 2 langkah 4 (jangan lupa isi, jangan dikosongin) |
+| `CPANEL_USERNAME` | Username cPanel kamu |
+
+## Bagian 6 — Testing
+
+1. Bikin perubahan kecil di lokal, commit, push ke `main`.
+2. Buka tab **Actions** di repo GitHub → tunggu sampai centang hijau (~30-60 detik).
+3. Cek folder live di File Manager — file yang diubah harusnya udah ke-update otomatis.
+4. Buka domain live, pastiin normal.
+
+Kalau merah/gagal, buka log run-nya di tab Actions — biasanya ketauan di step mana (SSH gagal connect = salah host/port/key, git pull gagal = deploy key Bagian 3 belum bener). Kirim errornya ke saya kalau butuh bantuan.
+
+## Alur kerja harian (setelah semua di atas beres sekali)
 
 ```bash
 git add -A
 git commit -m "deskripsi perubahannya"
 git push
 ```
-— lanjut 2 klik di cPanel di atas. Kalau ada perubahan tampilan (CSS/JS/Tailwind), jalanin `npm run build` DULU sebelum commit, biar `public/build` ikut ke-commit.
 
-### Kalau mau BENERAN otomatis (gak perlu klik sama sekali)
+Selesai — otomatis ke-deploy dalam hitungan detik, gak perlu buka cPanel sama sekali.
 
-Satu-satunya jalan: minta hosting kamu aktifin salah satu dari 2 fitur ini (keduanya fitur cPanel standar, biasanya gratis tinggal minta via tiket support, bukan upgrade paket):
-- **SSH Access** (walau cuma buat 1x setup awal), ATAU
-- **API Tokens** (Security → Manage API Tokens)
-
-Draft pesan buat tiket support:
-
-> Halo, saya mau nanya, apakah untuk akun cPanel saya (username: yntt4626) bisa diaktifkan fitur "API Tokens" (Security → Manage API Tokens) atau "SSH Access"? Saya butuh salah satunya untuk setup auto-deploy dari GitHub. Terima kasih.
-
-Kalau salah satu dikasih, kabari aku — aku update lagi panduannya jadi bener-bener 1x push langsung ke-deploy tanpa klik apapun.
+- Perubahan tampilan (CSS/JS/Tailwind/Vite): jalanin `npm run build` DULU sebelum commit (server gak ada Node, jadi build tetep manual di lokal), biar `public/build` ikut ke-commit.
+- Perubahan PHP (controller, model, job, migration): langsung push, gak perlu build apa-apa. Migration baru otomatis ke-jalanin (`migrate --force` ada di `deploy.sh`).
