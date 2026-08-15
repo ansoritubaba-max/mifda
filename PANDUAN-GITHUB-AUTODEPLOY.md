@@ -63,51 +63,45 @@ Kalau nanti pas deploy pertama error "php: command not found" atau "composer: co
 ```
 (ganti `ea-php81` sesuai versi PHP yang aktif). Commit + push perubahan ini abis ditest jalan.
 
-## Bagian 4 — Bikin cPanel API Token
+## ⚠️ REVISI PENTING — hostingmu gak support full-otomatis
 
-1. cPanel → **Security** → **Manage API Tokens** → **Create**.
-2. Kasih nama (misal `github-actions-deploy`), scope biarin default (full access akun kamu — cukup aman karena token ini cuma dipegang GitHub Actions, disimpan terenkripsi sebagai secret).
-3. **Copy token-nya SEKARANG** — cuma ditampilin sekali, kalau ke-skip harus generate baru.
+Udah dicek pakai script diagnostik: hostingmu mematikan `shell_exec`, `exec`, `proc_open`, dan gak ada fitur **API Tokens** maupun **SSH Access**. Artinya 3 cara "otomatis tanpa klik apa-apa" (GitHub Actions + API Token, webhook PHP, push-deployment SSH) semuanya gak bisa dipakai di paket hosting ini — bukan salah setup, memang dikunci dari sononya.
 
-Token ini SAMA dipakai buat Absensi maupun Mifda (satu akun cPanel, satu token cukup) — kecuali dua app kamu ada di 2 akun cPanel berbeda, baru butuh 2 token.
+**Yang masih 100% bisa dan tetap jauh lebih enak dari upload manual/FTP:** cPanel Git Version Control (Bagian 1-3 di atas tetap dipakai persis kayak gitu) + **2 klik manual** di cPanel setiap abis `git push`. Gak butuh SSH, API Token, atau `.github/workflows` sama sekali — makanya file workflow-nya udah aku hapus (gak akan pernah bisa jalan tanpa API Token).
 
-## Bagian 5 — Setup Secrets di GitHub (ulangi per repo)
+### Cara deploy (2 klik, ~15 detik)
 
-Di tiap repo GitHub → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**, tambahin 4 secret ini:
+Setiap abis `git push` ke GitHub:
 
-| Secret | Isi | Contoh |
-|---|---|---|
-| `CPANEL_HOSTNAME` | Hostname server cPanel (BUKAN domain absensi/mifda kamu — ini hostname servernya) | `https://server123.namahostingmu.com` |
-| `CPANEL_USERNAME` | Username cPanel | `usernamekamu` |
-| `CPANEL_TOKEN` | Token dari Bagian 4 | *(paste token)* |
-| `CPANEL_REPO_PATH` | Repository Path dari Bagian 2 langkah 3 | `/home/usernamekamu/repositories/absensi` |
+1. Buka cPanel → **Git™ Version Control** → klik **Manage** di repo yang mau diupdate.
+2. Tab **Pull or Deploy** → klik **Update from Remote** (ini yang narik commit terbaru dari GitHub).
+3. Klik **Deploy HEAD Commit** (ini yang jalanin `.cpanel.yml` — copy file ke folder live, `composer install`, `migrate --force`, cache clear — semua otomatis begitu diklik).
+4. Selesai. Buka domain live buat mastiin gak error.
 
-Cara cari `CPANEL_HOSTNAME`: cPanel → sidebar kiri ada info **"Server Information"**/**General Information**, atau cek email welcome dari hosting provider kamu pas pertama daftar (biasanya ada di situ). Port API-nya (2083) udah dihandle otomatis, gak perlu ditulis manual.
+### Testing pertama
 
-## Bagian 6 — Testing pertama
+1. Pastiin `.env` (versi PRODUCTION) udah ada manual di folder live cPanel — gak ikut ke-push lewat git (sengaja, demi keamanan), jadi kalau folder live belum punya `.env`, upload sekali manual lewat File Manager sebelum testing.
+2. Bikin perubahan kecil yang aman di lokal, commit, push ke `main`.
+3. Lakuin 2 klik di atas.
+4. Cek folder live di File Manager — file yang diubah harusnya udah ke-update. Buka domain live, pastiin normal.
 
-1. Pastiin `.env` (versi PRODUCTION, bukan yang di git) udah ada manual di folder live cPanel — ini **gak** ke-push lewat git (memang sengaja, biar kredensial aman), jadi kalau folder live belum punya `.env`, upload manual sekali lewat File Manager sebelum testing.
-2. Bikin perubahan kecil yang aman di lokal (misal ubah komentar di satu file), commit, push ke `main`.
-3. Buka tab **Actions** di repo GitHub → harusnya muncul workflow run baru, tunggu sampai centang hijau.
-4. Cek folder live di cPanel File Manager — file yang tadi diubah harusnya udah ke-update.
-5. Buka domain live-nya, pastiin masih jalan normal (gak 500).
-
-Kalau gagal di step 3 (merah/error), buka log run-nya di GitHub Actions, biasanya ketauan errornya di mana (salah token, salah path, dll) — kirim ke saya error-nya kalau butuh bantuan diagnosis.
-
-## Alur kerja harian (setelah semua di atas beres sekali)
-
-Setiap kali ada perubahan kode:
+### Alur kerja harian
 
 ```bash
 git add -A
 git commit -m "deskripsi perubahannya"
 git push
 ```
+— lanjut 2 klik di cPanel di atas. Kalau ada perubahan tampilan (CSS/JS/Tailwind), jalanin `npm run build` DULU sebelum commit, biar `public/build` ikut ke-commit.
 
-- Kalau ada perubahan tampilan (CSS/JS/Tailwind/Blade yang pakai Vite), jalanin `npm run build` DULU sebelum `git add`, biar `public/build` ikut ke-commit versi terbaru. Kalau cuma ubah logic PHP (controller, model, job, dll) — gak perlu `npm run build`, langsung commit aja.
-- Abis push, GitHub Actions otomatis jalan (~1-2 menit) → cPanel otomatis pull + composer install + migrate + cache clear. Gak perlu buka cPanel sama sekali.
-- Migration baru? Aman — `.cpanel.yml` udah include `migrate --force` otomatis tiap deploy (additive-only, sama seperti kebiasaan migration kita selama ini).
+### Kalau mau BENERAN otomatis (gak perlu klik sama sekali)
 
-## Kalau nanti hostingnya ternyata support SSH
+Satu-satunya jalan: minta hosting kamu aktifin salah satu dari 2 fitur ini (keduanya fitur cPanel standar, biasanya gratis tinggal minta via tiket support, bukan upgrade paket):
+- **SSH Access** (walau cuma buat 1x setup awal), ATAU
+- **API Tokens** (Security → Manage API Tokens)
 
-Kabari aku — ada cara yang lebih ringan/cepat pakai SSH langsung (gak perlu clone-staging-terus-copy kayak sekarang), plus bisa auto-build Vite di GitHub Actions (gak perlu `npm run build` manual tiap push). Setup sekarang tetap jalan normal walau nanti pindah cara, cuma lebih simpel aja kalau SSH ternyata ada.
+Draft pesan buat tiket support:
+
+> Halo, saya mau nanya, apakah untuk akun cPanel saya (username: yntt4626) bisa diaktifkan fitur "API Tokens" (Security → Manage API Tokens) atau "SSH Access"? Saya butuh salah satunya untuk setup auto-deploy dari GitHub. Terima kasih.
+
+Kalau salah satu dikasih, kabari aku — aku update lagi panduannya jadi bener-bener 1x push langsung ke-deploy tanpa klik apapun.
